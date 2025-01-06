@@ -1,0 +1,319 @@
+substitutions:
+  name: ledpong
+  friendly_name: "LedPong"
+
+esphome:
+  name: $name
+  platform: ESP32
+  board: esp32dev
+  includes:
+    - libraries/includes/audio-reactive-led-strip/music_leds_esphome.h
+    - libraries/includes/audio-reactive-led-strip/FFT.h
+    - libraries/includes/audio-reactive-led-strip/ExpFilter.h
+    - libraries/includes/audio-reactive-led-strip/VisualEffect.h
+    - libraries/includes/audio-reactive-led-strip/gaussian_filter1d.h
+
+
+<<: !include network.yaml
+
+captive_portal:
+
+ota:
+ - platform: esphome
+   password: !secret ota_password
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+  services:
+    - service: next_effect
+      then:
+        - script.execute: next_effect
+
+logger:
+
+globals:
+  - id: effect_index
+    type: int
+    initial_value: "0"
+
+script:
+  - id: next_effect
+    then:
+      - lambda: |-
+          static const char* effects[] = {
+            "Fire",
+            "Scroll with Music",
+            "Energy with Music",
+            "Spectrum with Music"
+          };
+
+          id(effect_index)++;
+          if (id(effect_index) >= 4) {
+            id(effect_index) = 0;
+          }
+
+          id(led_matrix_light).turn_on().set_effect(effects[id(effect_index)]).perform();
+
+light:
+  - platform: fastled_clockless
+    id: led_matrix_light
+    name: "${friendly_name} light"
+    chipset: WS2812B
+    pin: GPIO26
+    num_leds: 64
+    rgb_order: GRB
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      - lambda: |-
+          static const char* effects[] = {
+            "Fire",
+            "Scroll with Music",
+            "Energy with Music",
+            "Spectrum with Music"
+          };
+
+          id(led_matrix_light).turn_on().set_effect(effects[id(effect_index)]).perform();
+    effects:
+      - pulse:
+      - pulse:
+          name: "Fast Pulse"
+          transition_length: 0.5s
+          update_interval: 0.5s
+          min_brightness: 0%
+          max_brightness: 100%
+      - pulse:
+          name: "Slow Pulse"
+          transition_length: 500ms
+          update_interval: 2s
+      - pulse:
+          name: "Asymmetrical Pulse"
+          transition_length:
+            on_length: 1s
+            off_length: 500ms
+          update_interval: 1.5s
+      - addressable_rainbow:
+      - random:
+          name: "Random Effect speed"
+          transition_length: 100ms
+          update_interval: 500ms
+      - addressable_scan:
+      - addressable_scan:
+          name: "Scan Effect speed"
+          move_interval: 50ms
+          scan_width: 1
+      - addressable_color_wipe:
+          name: "Color Wipe Effect"
+          add_led_interval: 250ms
+      - addressable_twinkle:
+      - addressable_twinkle:
+          name: Twinkle Effect With Custom Values
+          twinkle_probability: 5%
+          progress_interval: 4ms
+      - addressable_fireworks:
+      - addressable_fireworks:
+          name: Fireworks Effect With Custom Values
+          update_interval: 32ms
+          spark_probability: 10%
+          use_random_color: false
+          fade_out_rate: 120
+      - addressable_flicker:
+      - addressable_flicker:
+          name: Flicker Effect With Custom Values
+          update_interval: 16ms
+          intensity: 5%
+      - addressable_lambda:
+          name: Fire
+          update_interval: 70ms
+          lambda: |-
+            // From https://github.com/esphome/feature-requests/issues/265#issuecomment-1000247345
+            const bool colmajor = false;
+            const bool mattop = true;
+            const bool matleft = true;
+            const bool zigzag = true;
+            const uint16_t rows = 8;
+            const uint16_t cols = 8;
+            const uint16_t offsetx = 0;
+            const uint16_t offsety = 0;
+            const uint8_t maxflare = 3;
+            const uint8_t flarerows = 7;
+            const uint8_t flarechance = 30;
+            const uint8_t flaredecay = 14;
+            const uint32_t colors[] = {0x000000,0x100000,0x300000,0x600000,0x800000,0xA00000,0xC02000,0xC04000,0xC06000,0xC08000,0x807080};
+            const uint8_t NCOLORS = (sizeof(colors)/sizeof(colors[0]));
+
+            static uint8_t nflare = 0;
+            static uint32_t flare[maxflare];
+            static uint8_t pix[rows][cols];
+            static bool needsinit = true;
+            static long t = 0;
+            
+            uint16_t b, d, i, j, k, l, n, x, y, z;
+            uint16_t phy_w = cols;
+            uint16_t phy_h = rows;
+            uint16_t phy_x = 0;
+            uint16_t phy_y = 0;
+            
+            
+            if ( needsinit == true ) {
+              needsinit = false;
+              for ( i=0; i<rows; ++i ) {
+                for ( j=0; j<cols; ++j ) {
+                  if ( i == 0 ) pix[i][j] = NCOLORS - 1;
+                  else pix[i][j] = 0;
+                }
+              }
+            }
+            
+            // First, move all existing heat points up the display and fade
+            for ( i=rows-1; i>0; --i ) {
+              for ( j=0; j<cols; ++j ) {
+                uint8_t n = 0;
+                if ( pix[i-1][j] > 0 )
+                  n = pix[i-1][j] - 1;
+                pix[i][j] = n;
+              }
+            }
+          
+            // Heat the bottom row
+            for ( j=0; j<cols; ++j ) {
+              i = pix[0][j];
+              if ( i > 0 ) {
+                pix[0][j] = random(NCOLORS-6, NCOLORS-2);
+              }
+            }
+
+            // Update existing flares
+            for ( i=0; i<nflare; ++i ) {
+              x = flare[i] & 0xff;
+              y = (flare[i] >> 8) & 0xff;
+              z = (flare[i] >> 16) & 0xff;
+              b = z * 10 / flaredecay + 1;
+              for ( k=(y-b); k<(y+b); ++k ) {
+                for ( int l=(x-b); l<(x+b); ++l ) {
+                  if ( k >=0 && l >= 0 && k < rows && l < cols ) {
+                    d = ( flaredecay * sqrt16((x-l)*(x-l) + (y-k)*(y-k)) + 5 ) / 10;
+                    n = 0;
+                    if ( z > d ) n = z - d;
+                    if ( n > pix[k][l] ) { // can only get brighter
+                      pix[k][l] = n;
+                    }
+                  }
+                }
+              }
+              if ( z > 1 ) {
+                flare[i] = (flare[i] & 0xffff) | ((z-1)<<16);
+              } else {
+                // This flare is out
+                for ( j=i+1; j<nflare; ++j ) {
+                  flare[j-1] = flare[j];
+                }
+                --nflare;
+              }
+            }
+            // New Flare
+            if ( nflare < maxflare && random(1,101) <= flarechance ) {
+              x = random(0, cols);
+              y = random(0, flarerows);
+              z = NCOLORS - 1;
+              b = z * 10 / flaredecay + 1;
+              flare[nflare++] = (z<<16) | (y<<8) | (x&0xff);
+              for ( k=(y-b); k<(y+b); ++k ) {
+                for ( int l=(x-b); l<(x+b); ++l ) {
+                  if ( k >=0 && l >= 0 && k < rows && l < cols ) {
+                    d = ( flaredecay * sqrt16((x-l)*(x-l) + (y-k)*(y-k)) + 5 ) / 10;
+                    n = 0;
+                    if ( z > d ) n = z - d;
+                    if ( n > pix[k][l] ) { // can only get brighter
+                      pix[k][l] = n;
+                    }
+                  }
+                }
+              }
+            }
+            // Draw
+            if ( colmajor == true ) {
+              phy_w = rows;
+              phy_h = cols;
+            }
+            for ( uint16_t row=0; row<rows; ++row ) {
+              for ( uint16_t col=0; col<cols; ++col ) {
+                if ( colmajor == true ) {
+                    phy_x = offsetx + (uint16_t) row;
+                    phy_y = offsety + (uint16_t) col;
+                } else {
+                    phy_x = offsetx + (uint16_t) col;
+                    phy_y = offsety + (uint16_t) row;
+                }
+                if ( matleft == true && zigzag == true ) {
+                  if ( ( phy_y & 1 ) == 1 ) {
+                    phy_x = phy_w - phy_x - 1;
+                  }
+                } else if ( matleft == false && zigzag == true ) {
+                  if ( ( phy_y & 1 ) == 0 ) {
+                    phy_x = phy_w - phy_x - 1;
+                  }
+                } else if ( matleft == false ) {
+                  phy_x = phy_w - phy_x - 1;
+                }
+                if ( mattop == true && colmajor == true ) {
+                  phy_x = phy_w - phy_x - 1;
+                } else if (mattop) {
+                  phy_y = phy_h - phy_y - 1;
+                }
+                it[phy_x + phy_y * phy_w] = ESPColor(colors[pix[row][col]]);
+              }
+            }
+      - addressable_lambda:
+          name: Scroll with Music
+          update_interval: 0s
+          lambda: |-
+            music_leds.ShowFrame(MODE_SCROLL, &it);
+      - addressable_lambda:
+          name: Energy with Music
+          update_interval: 0s
+          lambda: |-
+            music_leds.ShowFrame(MODE_ENERGY, &it);
+      - addressable_lambda:
+          name: Spectrum with Music
+          update_interval: 0s
+          lambda: |-
+            music_leds.ShowFrame(MODE_SPECTRUM, &it);
+
+sensor:
+  - platform: uptime
+    name: "${friendly_name} uptime"
+
+  - platform: wifi_signal
+    name: "${friendly_name} WiFi signal"
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "${friendly_name} IP Address"
+
+switch:
+  - platform: template
+    name: "${friendly_name} Touch Pad Disabled"
+    id: disable_touch
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+
+binary_sensor:
+  - platform: gpio
+    name: "${friendly_name} Touch Pad"
+    pin: GPIO4
+    id: frame_touch
+    filters:
+      - delayed_on: 2500ms
+    on_press:
+      then:
+        - if:
+            condition:
+               switch.is_off: disable_touch
+            then:
+              - script.execute: next_effect
+            else:
+              - logger.log:
+                  format: "Disabled action from `Touch Pad Disabled` switch`"
+                  level: warn
